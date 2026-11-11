@@ -79,9 +79,24 @@ class JarvisAccessibilityService : AccessibilityService() {
         } else {
             AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         }
-        if (!root.performAction(action)) {
-            performGlobalAction(if (forward) GLOBAL_ACTION_DOWN else GLOBAL_ACTION_UP)
+        if (root.performAction(action)) return
+
+        // The active window root is not always scrollable. Find a scrollable
+        // child (for example a list or web page) and send the scroll action there.
+        performOnScrollableNode(root, action)
+    }
+
+    private fun performOnScrollableNode(
+        node: AccessibilityNodeInfo,
+        action: Int
+    ): Boolean {
+        if (node.isScrollable && node.performAction(action)) return true
+
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            if (performOnScrollableNode(child, action)) return true
         }
+        return false
     }
 
     private fun clickText(target: String) {
