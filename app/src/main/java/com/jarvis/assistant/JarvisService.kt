@@ -21,8 +21,6 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.k2fsa.sherpa.onnx.FeatureConfig
-import com.k2fsa.sherpa.onnx.KeywordSpotter
-import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
@@ -45,8 +43,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         private const val SAMPLE_RATE = 16000
         private const val SLEEP_TIMEOUT = 30000L
 
-        private const val KWS_MODEL_DIR =
-            "kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
         private const val ASR_MODEL_DIR =
             "asr/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
     }
@@ -58,8 +54,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var isListening = false
     @Volatile private var ttsReady = false
 
-    private var keywordSpotter: KeywordSpotter? = null
-    private var wakeStream: OnlineStream? = null
     private var commandRecognizer: OnlineRecognizer? = null
     private var commandStream: OnlineStream? = null
     private var audioRecord: AudioRecord? = null
@@ -108,11 +102,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             initializationThread = thread(start = true, name = "JarvisModelInit") {
                 try {
                     acquireCpuWakeLock()
-                    updateNotification("Loading wake-word model")
-                    initializeKeywordSpotter()
-
-                    if (serviceDestroyed) return@thread
-
                     updateNotification("Loading offline speech recognition")
                     initializeCommandRecognizer()
 
@@ -150,31 +139,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         } finally {
             cpuWakeLock = null
         }
-    }
-
-    private fun initializeKeywordSpotter() {
-        val modelConfig = OnlineModelConfig(
-            transducer = OnlineTransducerModelConfig(
-                encoder = "$KWS_MODEL_DIR/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
-                decoder = "$KWS_MODEL_DIR/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
-                joiner = "$KWS_MODEL_DIR/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
-            ),
-            tokens = "$KWS_MODEL_DIR/tokens.txt",
-            numThreads = 2,
-            provider = "cpu",
-            modelType = "zipformer2"
-        )
-        val config = KeywordSpotterConfig(
-            featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
-            modelConfig = modelConfig,
-            keywordsFile = "$KWS_MODEL_DIR/keywords.txt",
-            // Improve recall for the short custom wake word.
-            keywordsScore = 3.0f,
-            keywordsThreshold = 0.05f
-        )
-        keywordSpotter = KeywordSpotter(assetManager = assets, config = config)
-        wakeStream = keywordSpotter!!.createStream()
-        Log.i(TAG, "Wake-word model loaded")
     }
 
     private fun initializeCommandRecognizer() {
@@ -258,11 +222,8 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                 val count = recorder.read(buffer, 0, buffer.size)
                 if (count <= 0) continue
                 val samples = FloatArray(count) { buffer[it] / 32768.0f }
-                when (mode) {
-                    ListeningMode.WAKE_WORD -> processWakeWord(samples)
-                    ListeningMode.COMMAND -> processCommand(samples)
-                    ListeningMode.SPEAKING -> Unit
-                }
+                // One recognizer continuously transcribes in standby and command mode.
+                if (mode != ListeningMode.SPEAKING) processSpeech(samples)
                 checkSleepTimeout()
             }
         } catch (e: Exception) {
@@ -271,59 +232,47 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         Log.i(TAG, "Microphone processing stopped")
     }
 
-    private fun processWakeWord(samples: FloatArray) {
-        val kws = keywordSpotter ?: return
-        val stream = wakeStream ?: return
-        // Apply a gentle software gain before wake-word decoding. Clamp samples
-        // to avoid clipping; this can help with quieter speech, but may also
-        // make background noise more noticeable.
-        val boostedSamples = FloatArray(samples.size) {
-            (samples[it] * 1.5f).coerceIn(-1.0f, 1.0f)
-        }
-        stream.acceptWaveform(boostedSamples, sampleRate = SAMPLE_RATE)
-        while (kws.isReady(stream)) {
-            kws.decode(stream)
-            val detected = kws.getResult(stream).keyword
-            if (detected.isNotBlank()) {
-                kws.reset(stream)
-                onWakeWordDetected(detected)
-                return
-            }
-        }
-    }
-
-    private fun onWakeWordDetected(keyword: String) {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastWakeTime < 4000) return
-        lastWakeTime = now
-        Log.i(TAG, "Wake word detected: $keyword")
-        updateNotification("Wake word detected — responding")
-        lastCommandActivity = now
-        speakThen("Yes, sir?", ListeningMode.COMMAND)
-    }
-
-    private fun processCommand(samples: FloatArray) {
+    private fun processSpeech(samples: FloatArray) {
         val recognizer = commandRecognizer ?: return
         val stream = commandStream ?: return
-        stream.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
+        val amplified = FloatArray(samples.size) {
+            (samples[it] * 1.35f).coerceIn(-1.0f, 1.0f)
+        }
+        stream.acceptWaveform(amplified, sampleRate = SAMPLE_RATE)
         while (recognizer.isReady(stream)) recognizer.decode(stream)
 
-        if (recognizer.isEndpoint(stream)) {
-            val result = recognizer.getResult(stream).text.trim()
-            recognizer.reset(stream)
-            if (result.isNotBlank()) {
-                // Only recognized speech resets the timer; room noise no longer keeps JARVIS awake.
-                lastCommandActivity = SystemClock.elapsedRealtime()
-                Log.i(TAG, "Recognized command: $result")
-                handleCommand(result)
+        if (!recognizer.isEndpoint(stream)) return
+        val result = recognizer.getResult(stream).text.trim()
+        recognizer.reset(stream)
+        if (result.isBlank()) return
+
+        Log.i(TAG, "Speech recognized: $result")
+        if (mode == ListeningMode.WAKE_WORD) {
+            val normalized = result.lowercase(Locale.US)
+                .replace(Regex("[^a-z0-9 ]"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            if (Regex("\\bjarvis\\b").containsMatchIn(normalized) ||
+                normalized.contains("jar vis")
+            ) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastWakeTime < 2000) return
+                lastWakeTime = now
+                lastCommandActivity = now
+                Log.i(TAG, "Wake phrase recognized by continuous speech recognizer")
+                speakThen("Yes, sir?", ListeningMode.COMMAND)
             }
+        } else if (mode == ListeningMode.COMMAND) {
+            lastCommandActivity = SystemClock.elapsedRealtime()
+            Log.i(TAG, "Recognized command: $result")
+            handleCommand(result)
         }
     }
 
     private fun checkSleepTimeout() {
         if (mode != ListeningMode.COMMAND) return
         if (SystemClock.elapsedRealtime() - lastCommandActivity >= SLEEP_TIMEOUT) {
-            Log.i(TAG, "Returning to wake-word standby after silence")
+            Log.i(TAG, "Returning to continuous-listening standby after silence")
             commandStream?.let { stream -> commandRecognizer?.reset(stream) }
             speakThen("I'll be here when you need me, sir.", ListeningMode.WAKE_WORD)
         }
@@ -442,15 +391,9 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
 
     private fun resumeListeningAfterSpeech() {
         if (nextMode == ListeningMode.WAKE_WORD) {
-            // Recreate the KWS stream so the next wake word starts cleanly.
-            try {
-                wakeStream?.release()
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not release previous wake-word stream", e)
-            }
-            wakeStream = keywordSpotter?.createStream()
+            commandStream?.let { stream -> commandRecognizer?.reset(stream) }
             mode = ListeningMode.WAKE_WORD
-            Log.i(TAG, "Wake-word listener re-armed")
+            Log.i(TAG, "Continuous speech listener returned to standby")
         } else {
             // Reset the command stream and listen for the user's sentence
             // immediately after JARVIS finishes saying "Yes, sir?"
@@ -490,7 +433,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                     lastCommandActivity = SystemClock.elapsedRealtime()
                     updateNotification(
                         if (mode == ListeningMode.COMMAND) "Listening for your command"
-                        else "Listening for JARVIS"
+                        else "Listening continuously — say JARVIS"
                     )
                 }
                 override fun onError(utteranceId: String?) {
@@ -536,10 +479,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         automaticGainControl = null
         try { noiseSuppressor?.release() } catch (_: Exception) { }
         noiseSuppressor = null
-        wakeStream?.release()
-        wakeStream = null
-        keywordSpotter?.release()
-        keywordSpotter = null
         commandStream?.release()
         commandStream = null
         commandRecognizer?.release()

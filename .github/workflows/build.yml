@@ -21,11 +21,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -46,17 +41,6 @@ jobs:
           cp /tmp/sherpa-android/jniLibs/arm64-v8a/*.so \
             app/src/main/jniLibs/arm64-v8a/
 
-      - name: Download English wake word model
-        run: |
-          mkdir -p app/src/main/assets/kws
-
-          curl -fL \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2 \
-            -o /tmp/jarvis-model.tar.bz2
-
-          tar -xjf /tmp/jarvis-model.tar.bz2 \
-            -C app/src/main/assets/kws
-
       - name: Download offline English command model
         run: |
           mkdir -p app/src/main/assets/asr
@@ -70,23 +54,6 @@ jobs:
 
           test -f app/src/main/assets/asr/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/encoder-epoch-99-avg-1.int8.onnx
           test -f app/src/main/assets/asr/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/tokens.txt
-
-      - name: Generate JARVIS wake word
-        run: |
-          pip install --no-cache-dir sherpa-onnx==1.13.8 click sentencepiece pypinyin
-
-          MODEL_DIR="app/src/main/assets/kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
-
-          printf "JARVIS\nHEY JARVIS\n" > "$MODEL_DIR/keywords_raw.txt"
-
-          sherpa-onnx-cli text2token \
-            --tokens "$MODEL_DIR/tokens.txt" \
-            --tokens-type bpe \
-            --bpe-model "$MODEL_DIR/bpe.model" \
-            "$MODEL_DIR/keywords_raw.txt" \
-            "$MODEL_DIR/keywords.txt"
-
-          cat "$MODEL_DIR/keywords.txt"
 
       - name: Build APK
         run: gradle assembleDebug --stacktrace
