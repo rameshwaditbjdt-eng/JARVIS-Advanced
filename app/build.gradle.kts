@@ -36,6 +36,10 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
 
-    // Offline speech and keyword spotting engine
-    implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8")
+    implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8") {
+        exclude(
+            group = "com.github.k2-fsa.sherpa-onnx",
+            module = "sherpa-onnx-jvm"
+        )
+    }
 }
