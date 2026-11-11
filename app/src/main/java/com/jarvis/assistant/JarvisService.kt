@@ -448,6 +448,30 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
+        val accessibilityCommand = when {
+            text == "scroll down" || text == "scroll" -> "scroll down"
+            text == "scroll up" -> "scroll up"
+            text == "go back" || text == "press back" -> "go back"
+            text == "go home" || text == "press home" -> "go home"
+            text == "show recent apps" || text == "open recent apps" -> "show recent apps"
+            text.startsWith("tap ") -> command
+            text.startsWith("click ") -> command
+            text.startsWith("type ") -> command
+            else -> null
+        }
+
+        if (accessibilityCommand != null) {
+            if (JarvisAccessibilityService.perform(accessibilityCommand)) {
+                speakThen("Done, sir.", ListeningMode.COMMAND)
+            } else {
+                speakThen(
+                    "App control is not enabled yet. Please enable JARVIS in Accessibility settings.",
+                    ListeningMode.COMMAND
+                )
+            }
+            return
+        }
+
         speakThen(
             "I heard you say $command. I don't know that command yet, sir.",
             ListeningMode.COMMAND
