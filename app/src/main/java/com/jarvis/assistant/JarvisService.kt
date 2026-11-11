@@ -163,7 +163,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             keywordsFile = "$KWS_MODEL_DIR/keywords.txt",
             // Improve recall for the short custom wake word.
             keywordsScore = 3.0f,
-            keywordsThreshold = 0.1f
+            keywordsThreshold = 0.05f
         )
         keywordSpotter = KeywordSpotter(assetManager = assets, config = config)
         wakeStream = keywordSpotter!!.createStream()
@@ -243,7 +243,13 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     private fun processWakeWord(samples: FloatArray) {
         val kws = keywordSpotter ?: return
         val stream = wakeStream ?: return
-        stream.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
+        // Apply a gentle software gain before wake-word decoding. Clamp samples
+        // to avoid clipping; this can help with quieter speech, but may also
+        // make background noise more noticeable.
+        val boostedSamples = FloatArray(samples.size) {
+            (samples[it] * 1.5f).coerceIn(-1.0f, 1.0f)
+        }
+        stream.acceptWaveform(boostedSamples, sampleRate = SAMPLE_RATE)
         while (kws.isReady(stream)) {
             kws.decode(stream)
             val detected = kws.getResult(stream).keyword
