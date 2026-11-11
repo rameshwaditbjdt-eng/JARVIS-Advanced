@@ -285,6 +285,14 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             .trim()
         Log.i(TAG, "Processing: $text")
 
+        when (VoiceCommandStore.findAction(this, text)) {
+            "open_whatsapp" -> { openApp("com.whatsapp", "WhatsApp"); return }
+            "open_youtube" -> { openApp("com.google.android.youtube", "YouTube"); return }
+            "open_chrome" -> { openApp("com.android.chrome", "Chrome"); return }
+            "open_calculator" -> { openCalculator(); return }
+            "sleep" -> { speakThen("Going to sleep, sir.", ListeningMode.WAKE_WORD); return }
+        }
+
         if (text.contains("go to sleep") || text.contains("sleep now") || text == "sleep") {
             speakThen("Going to sleep, sir.", ListeningMode.WAKE_WORD)
             return

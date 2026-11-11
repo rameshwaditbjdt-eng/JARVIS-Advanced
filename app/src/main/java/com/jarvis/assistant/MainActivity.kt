@@ -38,6 +38,14 @@ class MainActivity : Activity() {
         layout.addView(startButton)
         startButton.setOnClickListener { startJarvis() }
 
+        val voiceSetupButton = Button(this).apply {
+            text = "MY VOICE SETUP"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, VoiceSetupActivity::class.java))
+            }
+        }
+        layout.addView(voiceSetupButton)
+
         setContentView(layout)
         refreshServiceState()
     }
