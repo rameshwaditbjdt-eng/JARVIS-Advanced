@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -61,6 +63,8 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     private var commandRecognizer: OnlineRecognizer? = null
     private var commandStream: OnlineStream? = null
     private var audioRecord: AudioRecord? = null
+    private var automaticGainControl: AutomaticGainControl? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
     private var recordingThread: Thread? = null
     private var tts: TextToSpeech? = null
     private var pendingSpeech: Pair<String, ListeningMode>? = null
@@ -108,6 +112,9 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                     initializeKeywordSpotter()
 
                     if (serviceDestroyed) return@thread
+
+                    updateNotification("Loading offline speech recognition")
+                    initializeCommandRecognizer()
 
                     if (serviceDestroyed) return@thread
 
@@ -174,7 +181,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         val modelConfig = OnlineModelConfig(
             transducer = OnlineTransducerModelConfig(
                 encoder = "$ASR_MODEL_DIR/encoder-epoch-99-avg-1.int8.onnx",
-                decoder = "$ASR_MODEL_DIR/decoder-epoch-99-avg-1.onnx",
+                decoder = "$ASR_MODEL_DIR/decoder-epoch-99-avg-1.int8.onnx",
                 joiner = "$ASR_MODEL_DIR/joiner-epoch-99-avg-1.int8.onnx"
             ),
             tokens = "$ASR_MODEL_DIR/tokens.txt",
@@ -201,7 +208,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         if (minBufferSize <= 0) throw IllegalStateException("Invalid microphone buffer size")
 
         audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -209,6 +216,30 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         )
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
             throw IllegalStateException("Microphone initialization failed")
+        }
+
+        // Enable Android's microphone gain control and noise reduction when
+        // the device supports them. These effects process captured audio
+        // before it reaches the offline wake-word and command models.
+        val audioSessionId = audioRecord!!.audioSessionId
+        try {
+            if (AutomaticGainControl.isAvailable()) {
+                automaticGainControl = AutomaticGainControl.create(audioSessionId)?.apply {
+                    enabled = true
+                }
+            }
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(audioSessionId)?.apply {
+                    enabled = true
+                }
+            }
+            Log.i(
+                TAG,
+                "Audio effects: AGC=" + (automaticGainControl?.enabled == true) +
+                    ", noise suppression=" + (noiseSuppressor?.enabled == true)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Optional microphone effects could not be enabled", e)
         }
 
         audioRecord!!.startRecording()
@@ -268,7 +299,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         Log.i(TAG, "Wake word detected: $keyword")
         updateNotification("Wake word detected — responding")
         lastCommandActivity = now
-        speakThen("Yes, sir?", ListeningMode.WAKE_WORD)
+        speakThen("Yes, sir?", ListeningMode.COMMAND)
     }
 
     private fun processCommand(samples: FloatArray) {
@@ -409,17 +440,25 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun rearmWakeWordListener() {
-        // Recreate the KWS stream after each reply so the next wake word
-        // starts from a clean decoder state.
-        try {
-            wakeStream?.release()
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not release previous wake-word stream", e)
+    private fun resumeListeningAfterSpeech() {
+        if (nextMode == ListeningMode.WAKE_WORD) {
+            // Recreate the KWS stream so the next wake word starts cleanly.
+            try {
+                wakeStream?.release()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not release previous wake-word stream", e)
+            }
+            wakeStream = keywordSpotter?.createStream()
+            mode = ListeningMode.WAKE_WORD
+            Log.i(TAG, "Wake-word listener re-armed")
+        } else {
+            // Reset the command stream and listen for the user's sentence
+            // immediately after JARVIS finishes saying "Yes, sir?"
+            commandStream?.let { stream -> commandRecognizer?.reset(stream) }
+            mode = ListeningMode.COMMAND
+            lastCommandActivity = SystemClock.elapsedRealtime()
+            Log.i(TAG, "Command listener active")
         }
-        wakeStream = keywordSpotter?.createStream()
-        mode = ListeningMode.WAKE_WORD
-        Log.i(TAG, "Wake-word listener re-armed")
     }
 
     private fun updateNotification(status: String) {
@@ -447,13 +486,16 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) {
-                    rearmWakeWordListener()
+                    resumeListeningAfterSpeech()
                     lastCommandActivity = SystemClock.elapsedRealtime()
-                    updateNotification("Listening for JARVIS")
+                    updateNotification(
+                        if (mode == ListeningMode.COMMAND) "Listening for your command"
+                        else "Listening for JARVIS"
+                    )
                 }
                 override fun onError(utteranceId: String?) {
                     Log.e(TAG, "Text-to-speech utterance failed")
-                    rearmWakeWordListener()
+                    resumeListeningAfterSpeech()
                     lastCommandActivity = SystemClock.elapsedRealtime()
                     updateNotification("Voice output failed — listening")
                 }
@@ -490,6 +532,10 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         try { recordingThread?.join(1500) } catch (_: InterruptedException) { }
         audioRecord?.release()
         audioRecord = null
+        try { automaticGainControl?.release() } catch (_: Exception) { }
+        automaticGainControl = null
+        try { noiseSuppressor?.release() } catch (_: Exception) { }
+        noiseSuppressor = null
         wakeStream?.release()
         wakeStream = null
         keywordSpotter?.release()
