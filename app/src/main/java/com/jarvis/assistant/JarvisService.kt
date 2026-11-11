@@ -19,10 +19,13 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.k2fsa.sherpa.onnx.EndpointConfig
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import java.util.Locale
@@ -37,12 +40,18 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         private const val TAG = "JARVIS"
         private const val SAMPLE_RATE = 16000
 
-        private const val MODEL_DIR =
+        private const val KWS_MODEL_DIR =
             "kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
+
+        private const val ASR_MODEL_DIR =
+            "asr/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
     }
 
     private var keywordSpotter: KeywordSpotter? = null
-    private var stream: OnlineStream? = null
+    private var wakeStream: OnlineStream? = null
+
+    private var commandRecognizer: OnlineRecognizer? = null
+
     private var audioRecord: AudioRecord? = null
     private var recordingThread: Thread? = null
     private var tts: TextToSpeech? = null
@@ -54,6 +63,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
 
     override fun onCreate() {
         super.onCreate()
+
         createNotificationChannel()
         tts = TextToSpeech(this, this)
     }
@@ -86,9 +96,10 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         if (!isListening) {
             try {
                 initializeKeywordSpotter()
+                initializeCommandRecognizer()
                 startListening()
             } catch (e: Exception) {
-                Log.e(TAG, "Could not start wake-word detection", e)
+                Log.e(TAG, "Could not initialize JARVIS", e)
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -101,11 +112,11 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
 
         val modelConfig = OnlineModelConfig(
             transducer = OnlineTransducerModelConfig(
-                encoder = "$MODEL_DIR/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
-                decoder = "$MODEL_DIR/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
-                joiner = "$MODEL_DIR/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+                encoder = "$KWS_MODEL_DIR/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+                decoder = "$KWS_MODEL_DIR/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+                joiner = "$KWS_MODEL_DIR/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
             ),
-            tokens = "$MODEL_DIR/tokens.txt",
+            tokens = "$KWS_MODEL_DIR/tokens.txt",
             numThreads = 2,
             provider = "cpu",
             modelType = "zipformer2"
@@ -117,7 +128,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                 featureDim = 80
             ),
             modelConfig = modelConfig,
-            keywordsFile = "$MODEL_DIR/keywords.txt",
+            keywordsFile = "$KWS_MODEL_DIR/keywords.txt",
             keywordsScore = 1.5f,
             keywordsThreshold = 0.25f
         )
@@ -127,9 +138,41 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             config = config
         )
 
-        stream = keywordSpotter!!.createStream()
+        wakeStream = keywordSpotter!!.createStream()
 
-        Log.i(TAG, "Offline JARVIS wake-word model loaded")
+        Log.i(TAG, "Offline wake-word model loaded")
+    }
+
+    private fun initializeCommandRecognizer() {
+
+        val modelConfig = OnlineModelConfig(
+            transducer = OnlineTransducerModelConfig(
+                encoder = "$ASR_MODEL_DIR/encoder-epoch-99-avg-1.int8.onnx",
+                decoder = "$ASR_MODEL_DIR/decoder-epoch-99-avg-1.onnx",
+                joiner = "$ASR_MODEL_DIR/joiner-epoch-99-avg-1.int8.onnx"
+            ),
+            tokens = "$ASR_MODEL_DIR/tokens.txt",
+            numThreads = 2,
+            provider = "cpu",
+            modelType = "zipformer"
+        )
+
+        val config = OnlineRecognizerConfig(
+            featConfig = FeatureConfig(
+                sampleRate = SAMPLE_RATE,
+                featureDim = 80
+            ),
+            modelConfig = modelConfig,
+            endpointConfig = EndpointConfig(),
+            enableEndpoint = true
+        )
+
+        commandRecognizer = OnlineRecognizer(
+            assetManager = assets,
+            config = config
+        )
+
+        Log.i(TAG, "Offline English command model loaded")
     }
 
     private fun startListening() {
@@ -173,7 +216,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
 
         val recorder = audioRecord ?: return
         val kws = keywordSpotter ?: return
-        val currentStream = stream ?: return
+        val currentStream = wakeStream ?: return
 
         val buffer = ShortArray(1600)
 
@@ -205,6 +248,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                             kws.getResult(currentStream).keyword
 
                         if (detected.isNotBlank()) {
+
                             kws.reset(currentStream)
                             onWakeWordDetected(detected)
                         }
@@ -258,6 +302,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             }
 
             Log.i(TAG, "Voice system initialized")
+
         } else {
             Log.e(TAG, "Text-to-speech initialization failed")
         }
@@ -301,11 +346,14 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         audioRecord?.release()
         audioRecord = null
 
-        stream?.release()
-        stream = null
+        wakeStream?.release()
+        wakeStream = null
 
         keywordSpotter?.release()
         keywordSpotter = null
+
+        commandRecognizer?.release()
+        commandRecognizer = null
 
         tts?.stop()
         tts?.shutdown()
