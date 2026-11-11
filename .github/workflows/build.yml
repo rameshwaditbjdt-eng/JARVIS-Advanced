@@ -59,7 +59,7 @@ jobs:
 
       - name: Generate JARVIS wake word
         run: |
-          pip install --no-cache-dir sherpa-onnx==1.13.8 click sentencepiece
+          pip install --no-cache-dir sherpa-onnx==1.13.8 click sentencepiece pypinyin
 
           MODEL_DIR="app/src/main/assets/kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
 
