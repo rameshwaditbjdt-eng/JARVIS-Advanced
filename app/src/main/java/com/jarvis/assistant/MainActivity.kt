@@ -1,4 +1,3 @@
-
 package com.jarvis.assistant
 
 import android.Manifest
@@ -19,63 +18,63 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-        layout.setPadding(40, 80, 40, 40)
-
-        val title = TextView(this)
-        title.text = "J.A.R.V.I.S"
-        title.textSize = 32f
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 80, 40, 40)
+        }
+        val title = TextView(this).apply {
+            text = "J.A.R.V.I.S"
+            textSize = 32f
+        }
         layout.addView(title)
 
-        statusText = TextView(this)
-        statusText.text = "SYSTEM STANDBY"
-        statusText.textSize = 18f
-        statusText.setPadding(0, 30, 0, 30)
+        statusText = TextView(this).apply {
+            textSize = 18f
+            setPadding(0, 30, 0, 30)
+        }
         layout.addView(statusText)
 
         startButton = Button(this)
-        startButton.text = "START JARVIS"
         layout.addView(startButton)
-
-        startButton.setOnClickListener {
-            startJarvis()
-        }
+        startButton.setOnClickListener { startJarvis() }
 
         setContentView(layout)
+        refreshServiceState()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshServiceState()
+    }
+
+    private fun refreshServiceState() {
+        val active = JarvisService.isRunning
+        statusText.text = if (active) "JARVIS BACKGROUND ACTIVE" else "SYSTEM STANDBY"
+        startButton.text = if (active) "JARVIS IS ACTIVE" else "START JARVIS"
+        startButton.isEnabled = !active
     }
 
     private fun startJarvis() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED) {
-
-            requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                101
-            )
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 101)
             return
         }
-
         launchJarvisService()
     }
 
     private fun launchJarvisService() {
         try {
-            val intent = Intent(this, JarvisService::class.java)
-            startForegroundService(intent)
-
-            statusText.text = "JARVIS BACKGROUND ACTIVE"
-            startButton.text = "JARVIS IS ACTIVE"
+            startForegroundService(Intent(this, JarvisService::class.java))
+            statusText.text = "STARTING JARVIS..."
+            startButton.text = "JARVIS IS STARTING"
             startButton.isEnabled = false
-
         } catch (e: Exception) {
             statusText.text = "START FAILED"
-
-            Toast.makeText(
-                this,
-                "Could not start JARVIS.",
-                Toast.LENGTH_LONG
-            ).show()
+            startButton.text = "START JARVIS"
+            startButton.isEnabled = true
+            Toast.makeText(this, "Could not start JARVIS.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -84,18 +83,16 @@ class MainActivity : Activity() {
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
-        super.onRequestPermissionsResult(
-            requestCode,
-            permissions,
-            grantResults
-        )
-
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 101) {
             if (grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            ) {
                 launchJarvisService()
             } else {
                 statusText.text = "MICROPHONE PERMISSION REQUIRED"
+                startButton.text = "START JARVIS"
+                startButton.isEnabled = true
             }
         }
     }

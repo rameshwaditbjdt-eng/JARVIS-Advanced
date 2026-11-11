@@ -1,4 +1,3 @@
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,11 +11,13 @@ android {
         applicationId = "com.jarvis.assistant"
         minSdk = 26
         targetSdk = 32
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
+        // The Galaxy M31 uses 64-bit ARM. sherpa-onnx native libraries in CI
+        // are currently downloaded for arm64-v8a only.
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
