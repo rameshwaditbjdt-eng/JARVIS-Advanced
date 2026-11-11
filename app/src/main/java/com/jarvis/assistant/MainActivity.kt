@@ -5,19 +5,24 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private lateinit var statusText: TextView
     private lateinit var tts: TextToSpeech
+
     private val speechRequestCode = 100
     private val permissionRequestCode = 101
 
@@ -54,7 +59,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         startButton.setOnClickListener {
             statusText.text = "JARVIS READY"
-            speak("Hello. JARVIS is ready. You can talk to me.")
+            speak("Hello. JARVIS is ready.")
         }
 
         listenButton.setOnClickListener {
@@ -72,6 +77,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun checkPermissionAndListen() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
+
             requestPermissions(
                 arrayOf(Manifest.permission.RECORD_AUDIO),
                 permissionRequestCode
@@ -81,51 +87,38 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    
-private fun respondToUser(message: String) {
-    when {
-        message.contains("open youtube", ignoreCase = true) ||
-        message.contains("launch youtube", ignoreCase = true) -> {
-            openYouTube()
+    private fun startListening() {
+        try {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+
+            intent.putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+
+            intent.putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE,
+                Locale.getDefault()
+            )
+
+            intent.putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                "Speak to JARVIS"
+            )
+
+            startActivityForResult(intent, speechRequestCode)
+            statusText.text = "LISTENING..."
+
+        } catch (e: Exception) {
+            statusText.text = "SPEECH RECOGNITION UNAVAILABLE"
+            Toast.makeText(
+                this,
+                "Speech recognition is unavailable.",
+                Toast.LENGTH_LONG
+            ).show()
         }
-
-        message.contains("hello", ignoreCase = true) ->
-            speak("Hello. It is good to hear from you.")
-
-        message.contains("your name", ignoreCase = true) ->
-            speak("I am JARVIS, your personal assistant.")
-
-        message.contains("how are you", ignoreCase = true) ->
-            speak("I am functioning perfectly. How are you?")
-
-        message.contains("time", ignoreCase = true) ->
-            speak("The time is ${
-                java.text.SimpleDateFormat(
-                    "hh:mm a",
-                    Locale.getDefault()
-                ).format(java.util.Date())
-            }.")
-
-        message.contains("thank", ignoreCase = true) ->
-            speak("You are welcome. Always happy to help.")
-
-        else ->
-            speak("I heard you say: $message. I am still learning.")
     }
-}
 
-private fun openYouTube() {
-    val launchIntent =
-        packageManager.getLaunchIntentForPackage("com.google.android.youtube")
-
-    if (launchIntent != null) {
-        statusText.text = "OPENING YOUTUBE..."
-        speak("Opening YouTube.")
-        startActivity(launchIntent)
-    } else {
-        speak("YouTube is not installed on this phone.")
-    }
-}
     @Deprecated("Deprecated in Android API")
     override fun onActivityResult(
         requestCode: Int,
@@ -134,7 +127,9 @@ private fun openYouTube() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == speechRequestCode && resultCode == RESULT_OK) {
+        if (requestCode == speechRequestCode &&
+            resultCode == RESULT_OK) {
+
             val results = data?.getStringArrayListExtra(
                 RecognizerIntent.EXTRA_RESULTS
             )
@@ -153,50 +148,145 @@ private fun openYouTube() {
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        super.onRequestPermissionsResult(
+            requestCode,
+            permissions,
+            grantResults
+        )
 
         if (requestCode == permissionRequestCode &&
             grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startListening()
-        } else if (requestCode == permissionRequestCode) {
-            statusText.text = "MICROPHONE PERMISSION DENIED"
         }
     }
 
     private fun respondToUser(message: String) {
-        val reply = when {
-            message.contains("hello", ignoreCase = true) ->
-                "Hello. It is good to hear from you."
+        val command = message.lowercase(Locale.getDefault())
 
-            message.contains("your name", ignoreCase = true) ->
-                "I am JARVIS, your personal assistant."
+        when {
+            command.contains("open youtube") ||
+            command.contains("launch youtube") ->
+                openApp("YouTube", "com.google.android.youtube")
 
-            message.contains("how are you", ignoreCase = true) ->
-                "I am functioning perfectly. How are you?"
+            command.contains("open whatsapp") ->
+                openApp("WhatsApp", "com.whatsapp")
 
-            message.contains("time", ignoreCase = true) ->
-                "The time is ${
-                    java.text.SimpleDateFormat(
-                        "hh:mm a",
-                        Locale.getDefault()
-                    ).format(java.util.Date())
-                }."
+            command.contains("open chrome") ->
+                openApp("Chrome", "com.android.chrome")
 
-            message.contains("thank", ignoreCase = true) ->
-                "You are welcome. Always happy to help."
+            command.contains("open instagram") ->
+                openApp("Instagram", "com.instagram.android")
+
+            command.contains("open facebook") ->
+                openApp("Facebook", "com.facebook.katana")
+
+            command.contains("open settings") ->
+                openSystemSettings()
+
+            command.contains("open camera") ->
+                openCamera()
+
+            command.contains("open gallery") ||
+            command.contains("open photos") ->
+                openGallery()
+
+            command.contains("open calculator") ->
+                openApp(
+                    "Calculator",
+                    "com.sec.android.app.popupcalculator",
+                    "com.google.android.calculator"
+                )
+
+            command.contains("open play store") ->
+                openApp("Play Store", "com.android.vending")
+
+            command.contains("open maps") ||
+            command.contains("open google maps") ->
+                openApp("Google Maps", "com.google.android.apps.maps")
+
+            command.contains("open gmail") ->
+                openApp("Gmail", "com.google.android.gm")
+
+            command.contains("hello") ->
+                speak("Hello. It is good to hear from you.")
+
+            command.contains("your name") ->
+                speak("I am JARVIS, your personal assistant.")
+
+            command.contains("how are you") ->
+                speak("I am functioning perfectly. How are you?")
+
+            command.contains("time") ->
+                speak("The time is ${
+                    SimpleDateFormat("hh:mm a", Locale.getDefault())
+                        .format(Date())
+                }.")
+
+            command.contains("thank") ->
+                speak("You are welcome.")
 
             else ->
-                "I heard you say: $message. My intelligence system is still being developed."
+                speak("I heard you say $message. I am still learning.")
+        }
+    }
+
+    private fun openApp(name: String, vararg packages: String) {
+        for (packageName in packages) {
+            val launchIntent =
+                packageManager.getLaunchIntentForPackage(packageName)
+
+            if (launchIntent != null) {
+                statusText.text = "OPENING $name"
+                speak("Opening $name.")
+                startActivity(launchIntent)
+                return
+            }
         }
 
-        statusText.text = "JARVIS: $reply"
-        speak(reply)
+        speak("$name is not installed or cannot be opened.")
+    }
+
+    private fun openSystemSettings() {
+        try {
+            speak("Opening Settings.")
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        } catch (e: Exception) {
+            speak("I could not open Settings.")
+        }
+    }
+
+    private fun openCamera() {
+        try {
+            speak("Opening Camera.")
+            startActivity(Intent("android.media.action.IMAGE_CAPTURE"))
+        } catch (e: Exception) {
+            speak("I could not open Camera.")
+        }
+    }
+
+    private fun openGallery() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW)
+            intent.setDataAndType(
+                Uri.parse("content://media/internal/images/media"),
+                "image/*"
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: Exception) {
+            speak("I could not open Gallery.")
+        }
     }
 
     private fun speak(message: String) {
         if (::tts.isInitialized) {
-            tts.speak(message, TextToSpeech.QUEUE_FLUSH, null, "JARVIS_REPLY")
+            tts.speak(
+                message,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                "JARVIS_REPLY"
+            )
         }
     }
 
