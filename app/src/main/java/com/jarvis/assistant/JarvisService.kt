@@ -403,6 +403,19 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun rearmWakeWordListener() {
+        // Recreate the KWS stream after each reply so the next wake word
+        // starts from a clean decoder state.
+        try {
+            wakeStream?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not release previous wake-word stream", e)
+        }
+        wakeStream = keywordSpotter?.createStream()
+        mode = ListeningMode.WAKE_WORD
+        Log.i(TAG, "Wake-word listener re-armed")
+    }
+
     private fun updateNotification(status: String) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("JARVIS is active")
@@ -428,16 +441,13 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) {
-                    mode = nextMode
+                    rearmWakeWordListener()
                     lastCommandActivity = SystemClock.elapsedRealtime()
-                    updateNotification(
-                        if (mode == ListeningMode.COMMAND) "Listening for your command"
-                        else "Listening for JARVIS"
-                    )
+                    updateNotification("Listening for JARVIS")
                 }
                 override fun onError(utteranceId: String?) {
                     Log.e(TAG, "Text-to-speech utterance failed")
-                    mode = nextMode
+                    rearmWakeWordListener()
                     lastCommandActivity = SystemClock.elapsedRealtime()
                     updateNotification("Voice output failed — listening")
                 }
