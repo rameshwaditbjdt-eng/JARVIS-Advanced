@@ -54,7 +54,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
 
     override fun onCreate() {
         super.onCreate()
-
         createNotificationChannel()
         tts = TextToSpeech(this, this)
     }
@@ -103,7 +102,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         val modelConfig = OnlineModelConfig(
             transducer = OnlineTransducerModelConfig(
                 encoder = "$MODEL_DIR/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
-                decoder = "$MODEL_DIR/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+                decoder = "$MODEL_DIR/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
                 joiner = "$MODEL_DIR/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
             ),
             tokens = "$MODEL_DIR/tokens.txt",
@@ -206,7 +205,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                             kws.getResult(currentStream).keyword
 
                         if (detected.isNotBlank()) {
-
                             kws.reset(currentStream)
                             onWakeWordDetected(detected)
                         }
