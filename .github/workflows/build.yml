@@ -74,7 +74,7 @@ jobs:
 
           MODEL_DIR="app/src/main/assets/kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
 
-          echo "JARVIS" > "$MODEL_DIR/keywords_raw.txt"
+          printf "JARVIS\nHEY JARVIS\n" > "$MODEL_DIR/keywords_raw.txt"
 
           sherpa-onnx-cli text2token \
             --tokens "$MODEL_DIR/tokens.txt" \

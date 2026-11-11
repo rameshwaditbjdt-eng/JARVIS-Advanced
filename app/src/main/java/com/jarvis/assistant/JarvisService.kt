@@ -63,6 +63,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     private var audioRecord: AudioRecord? = null
     private var recordingThread: Thread? = null
     private var tts: TextToSpeech? = null
+    private var pendingSpeech: Pair<String, ListeningMode>? = null
     private var cpuWakeLock: PowerManager.WakeLock? = null
 
     @Volatile private var lastWakeTime = 0L
@@ -78,8 +79,8 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification: Notification =
             NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("JARVIS is active")
-                .setContentText("Listening for the wake word")
+                .setContentTitle("JARVIS is starting")
+                .setContentText("Loading offline voice models")
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -149,8 +150,9 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
             modelConfig = modelConfig,
             keywordsFile = "$KWS_MODEL_DIR/keywords.txt",
-            keywordsScore = 1.5f,
-            keywordsThreshold = 0.25f
+            // Improve recall for the short custom wake word.
+            keywordsScore = 3.0f,
+            keywordsThreshold = 0.1f
         )
         keywordSpotter = KeywordSpotter(assetManager = assets, config = config)
         wakeStream = keywordSpotter!!.createStream()
@@ -202,6 +204,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         isListening = true
         lastCommandActivity = SystemClock.elapsedRealtime()
         recordingThread = thread(start = true, name = "JarvisAudio") { processMicrophone() }
+        updateNotification("Listening for JARVIS")
         Log.i(TAG, "Microphone listening started")
     }
 
@@ -246,6 +249,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         if (now - lastWakeTime < 4000) return
         lastWakeTime = now
         Log.i(TAG, "Wake word detected: $keyword")
+        updateNotification("Wake word detected — responding")
         lastCommandActivity = now
         speakThen("Yes, sir?", ListeningMode.COMMAND)
     }
@@ -364,10 +368,16 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         nextMode = afterSpeech
         mode = ListeningMode.SPEAKING
         if (!ttsReady || tts == null) {
-            mode = afterSpeech
-            lastCommandActivity = SystemClock.elapsedRealtime()
+            pendingSpeech = message to afterSpeech
+            updateNotification("Wake word heard — preparing voice")
             return
         }
+        speakNow(message, afterSpeech)
+    }
+
+    private fun speakNow(message: String, afterSpeech: ListeningMode) {
+        nextMode = afterSpeech
+        mode = ListeningMode.SPEAKING
         val result = tts?.speak(
             message,
             TextToSpeech.QUEUE_FLUSH,
@@ -375,9 +385,23 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             "jarvis_${SystemClock.elapsedRealtime()}"
         )
         if (result == TextToSpeech.ERROR) {
+            Log.e(TAG, "Text-to-speech rejected utterance")
             mode = afterSpeech
             lastCommandActivity = SystemClock.elapsedRealtime()
+            updateNotification("Voice output failed — listening")
         }
+    }
+
+    private fun updateNotification(status: String) {
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("JARVIS is active")
+            .setContentText(status)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, notification)
     }
 
     override fun onInit(status: Int) {
@@ -395,16 +419,28 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
                 override fun onDone(utteranceId: String?) {
                     mode = nextMode
                     lastCommandActivity = SystemClock.elapsedRealtime()
+                    updateNotification(
+                        if (mode == ListeningMode.COMMAND) "Listening for your command"
+                        else "Listening for JARVIS"
+                    )
                 }
                 override fun onError(utteranceId: String?) {
+                    Log.e(TAG, "Text-to-speech utterance failed")
                     mode = nextMode
                     lastCommandActivity = SystemClock.elapsedRealtime()
+                    updateNotification("Voice output failed — listening")
                 }
             })
             ttsReady = true
             Log.i(TAG, "Voice system initialized")
+            val queued = pendingSpeech
+            pendingSpeech = null
+            if (queued != null) speakNow(queued.first, queued.second)
         } else {
-            Log.e(TAG, "Text-to-speech initialization failed")
+            Log.e(TAG, "Text-to-speech initialization failed: status=$status")
+            pendingSpeech = null
+            mode = nextMode
+            updateNotification("Voice engine unavailable")
         }
     }
 
