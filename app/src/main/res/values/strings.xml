@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="jarvis_accessibility_description">Allows JARVIS to carry out spoken commands such as scrolling, tapping visible text, and typing into the focused field. Actions happen only after you enable this service and issue a command.</string>
+</resources>
