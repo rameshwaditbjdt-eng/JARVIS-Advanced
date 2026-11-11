@@ -25,6 +25,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private val speechRequestCode = 100
     private val permissionRequestCode = 101
+    private val servicePermissionRequestCode = 102
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,8 +59,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         layout.addView(stopButton)
 
         startButton.setOnClickListener {
-            statusText.text = "JARVIS READY"
-            speak("Hello. JARVIS is ready.")
+            startBackgroundService()
         }
 
         listenButton.setOnClickListener {
@@ -67,12 +67,46 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         stopButton.setOnClickListener {
+            stopService(Intent(this, JarvisService::class.java))
             statusText.text = "SYSTEM OFFLINE"
             speak("JARVIS shutting down.")
         }
 
         setContentView(layout)
     }
+
+    // START BACKGROUND SERVICE
+
+    private fun startBackgroundService() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+
+            requestPermissions(
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                servicePermissionRequestCode
+            )
+            return
+        }
+
+        try {
+            val intent = Intent(this, JarvisService::class.java)
+            startForegroundService(intent)
+
+            statusText.text = "JARVIS BACKGROUND ACTIVE"
+            speak("JARVIS background service started.")
+
+        } catch (e: Exception) {
+            statusText.text = "SERVICE START FAILED"
+
+            Toast.makeText(
+                this,
+                "Could not start JARVIS background service.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // MANUAL SPEECH INPUT
 
     private fun checkPermissionAndListen() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
@@ -111,6 +145,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         } catch (e: Exception) {
             statusText.text = "SPEECH RECOGNITION UNAVAILABLE"
+
             Toast.makeText(
                 this,
                 "Speech recognition is unavailable.",
@@ -143,6 +178,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+    // PERMISSION RESULTS
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -154,12 +191,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             grantResults
         )
 
-        if (requestCode == permissionRequestCode &&
-            grantResults.isNotEmpty() &&
+        if (grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startListening()
+
+            when (requestCode) {
+                permissionRequestCode -> startListening()
+                servicePermissionRequestCode -> startBackgroundService()
+            }
+
+        } else if (
+            requestCode == permissionRequestCode ||
+            requestCode == servicePermissionRequestCode
+        ) {
+            Toast.makeText(
+                this,
+                "Microphone permission is required for JARVIS.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
+
+    // COMMAND HANDLING
 
     private fun respondToUser(message: String) {
         val command = message.lowercase(Locale.getDefault())
@@ -218,10 +270,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 speak("I am functioning perfectly. How are you?")
 
             command.contains("time") ->
-                speak("The time is ${
-                    SimpleDateFormat("hh:mm a", Locale.getDefault())
-                        .format(Date())
-                }.")
+                speak(
+                    "The time is ${
+                        SimpleDateFormat(
+                            "hh:mm a",
+                            Locale.getDefault()
+                        ).format(Date())
+                    }."
+                )
 
             command.contains("thank") ->
                 speak("You are welcome.")
@@ -230,6 +286,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 speak("I heard you say $message. I am still learning.")
         }
     }
+
+    // OPEN INSTALLED APPS
 
     private fun openApp(name: String, vararg packages: String) {
         for (packageName in packages) {
@@ -268,16 +326,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun openGallery() {
         try {
             val intent = Intent(Intent.ACTION_VIEW)
+
             intent.setDataAndType(
                 Uri.parse("content://media/internal/images/media"),
                 "image/*"
             )
+
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
+
         } catch (e: Exception) {
             speak("I could not open Gallery.")
         }
     }
+
+    // TEXT TO SPEECH
 
     private fun speak(message: String) {
         if (::tts.isInitialized) {
@@ -301,6 +364,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             tts.stop()
             tts.shutdown()
         }
+
         super.onDestroy()
     }
 }
