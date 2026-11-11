@@ -109,9 +109,6 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
 
                     if (serviceDestroyed) return@thread
 
-                    updateNotification("Loading command-recognition model")
-                    initializeCommandRecognizer()
-
                     if (serviceDestroyed) return@thread
 
                     startListening()
@@ -265,7 +262,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
         Log.i(TAG, "Wake word detected: $keyword")
         updateNotification("Wake word detected — responding")
         lastCommandActivity = now
-        speakThen("Yes, sir?", ListeningMode.COMMAND)
+        speakThen("Yes, sir?", ListeningMode.WAKE_WORD)
     }
 
     private fun processCommand(samples: FloatArray) {
