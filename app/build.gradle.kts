@@ -12,8 +12,12 @@ android {
         applicationId = "com.jarvis.assistant"
         minSdk = 26
         targetSdk = 32
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     compileOptions {
@@ -31,4 +35,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
+
+    // Offline speech and keyword spotting engine
+    implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8")
 }
