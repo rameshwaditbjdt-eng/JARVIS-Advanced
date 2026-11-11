@@ -65,6 +65,9 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var pendingSpeech: Pair<String, ListeningMode>? = null
     private var cpuWakeLock: PowerManager.WakeLock? = null
+    @Volatile private var initializationStarted = false
+    @Volatile private var serviceDestroyed = false
+    private var initializationThread: Thread? = null
 
     @Volatile private var lastWakeTime = 0L
     @Volatile private var lastCommandActivity = 0L
@@ -96,17 +99,28 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
             return START_NOT_STICKY
         }
 
-        if (!isListening) {
-            try {
-                acquireCpuWakeLock()
-                initializeKeywordSpotter()
-                initializeCommandRecognizer()
-                startListening()
-            } catch (e: Exception) {
-                Log.e(TAG, "JARVIS initialization failed", e)
-                releaseCpuWakeLock()
-                stopSelf()
-                return START_NOT_STICKY
+        if (!initializationStarted && !isListening) {
+            initializationStarted = true
+            initializationThread = thread(start = true, name = "JarvisModelInit") {
+                try {
+                    acquireCpuWakeLock()
+                    updateNotification("Loading wake-word model")
+                    initializeKeywordSpotter()
+
+                    if (serviceDestroyed) return@thread
+
+                    updateNotification("Loading command-recognition model")
+                    initializeCommandRecognizer()
+
+                    if (serviceDestroyed) return@thread
+
+                    startListening()
+                } catch (e: Exception) {
+                    Log.e(TAG, "JARVIS initialization failed", e)
+                    updateNotification("Startup failed — check microphone and model logs")
+                    releaseCpuWakeLock()
+                    stopSelf()
+                }
             }
         }
         return START_STICKY
@@ -456,6 +470,7 @@ class JarvisService : Service(), TextToSpeech.OnInitListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        serviceDestroyed = true
         isRunning = false
         isListening = false
         try { audioRecord?.stop() } catch (_: Exception) { }
