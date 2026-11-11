@@ -60,7 +60,7 @@ class VoiceSetupActivity : Activity() {
         })
         phraseInput = EditText(this).apply {
             hint = "Example: WhatsApp kholo"
-            singleLine = true
+            isSingleLine = true
         }
         content.addView(phraseInput, matchWidth())
 
