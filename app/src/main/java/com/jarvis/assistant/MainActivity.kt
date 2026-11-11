@@ -81,28 +81,51 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startListening() {
-        try {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            intent.putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to JARVIS")
-
-            startActivityForResult(intent, speechRequestCode)
-            statusText.text = "LISTENING..."
-        } catch (e: Exception) {
-            statusText.text = "SPEECH RECOGNITION UNAVAILABLE"
-            Toast.makeText(
-                this,
-                "Speech recognition is not available on this phone.",
-                Toast.LENGTH_LONG
-            ).show()
+    
+private fun respondToUser(message: String) {
+    when {
+        message.contains("open youtube", ignoreCase = true) ||
+        message.contains("launch youtube", ignoreCase = true) -> {
+            openYouTube()
         }
-    }
 
+        message.contains("hello", ignoreCase = true) ->
+            speak("Hello. It is good to hear from you.")
+
+        message.contains("your name", ignoreCase = true) ->
+            speak("I am JARVIS, your personal assistant.")
+
+        message.contains("how are you", ignoreCase = true) ->
+            speak("I am functioning perfectly. How are you?")
+
+        message.contains("time", ignoreCase = true) ->
+            speak("The time is ${
+                java.text.SimpleDateFormat(
+                    "hh:mm a",
+                    Locale.getDefault()
+                ).format(java.util.Date())
+            }.")
+
+        message.contains("thank", ignoreCase = true) ->
+            speak("You are welcome. Always happy to help.")
+
+        else ->
+            speak("I heard you say: $message. I am still learning.")
+    }
+}
+
+private fun openYouTube() {
+    val launchIntent =
+        packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+
+    if (launchIntent != null) {
+        statusText.text = "OPENING YOUTUBE..."
+        speak("Opening YouTube.")
+        startActivity(launchIntent)
+    } else {
+        speak("YouTube is not installed on this phone.")
+    }
+}
     @Deprecated("Deprecated in Android API")
     override fun onActivityResult(
         requestCode: Int,
